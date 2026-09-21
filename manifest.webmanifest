@@ -1,0 +1,14 @@
+{
+  "name": "Watchlist",
+  "short_name": "Watchlist",
+  "lang": "de",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EDF0F4",
+  "theme_color": "#2A4DFF",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

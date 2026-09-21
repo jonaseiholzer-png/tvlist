@@ -112,6 +112,16 @@ textarea.field{resize:vertical;font-size:14px}
 .ep .ed{flex:none;color:var(--muted);font-size:12px;text-align:right}
 .ep.off{opacity:.55}
 .foot{display:flex;gap:8px;justify-content:space-between;margin-top:20px}
+.scoreRow{display:flex;align-items:center;gap:16px}
+.scrub{flex:none;width:96px;height:104px;border-radius:18px;background:var(--surface);border:1px solid var(--line);
+       display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:8px 0;
+       touch-action:none;-webkit-user-select:none;user-select:none;cursor:ns-resize;color:var(--muted)}
+.scrub svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.scrub .num{font-family:var(--serif);font-size:36px;font-weight:600;line-height:1;color:var(--muted)}
+.scrub.set .num{color:var(--accent)}
+.scrub.drag{border-color:var(--accent)}
+.scoreSide{display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.sh{color:var(--muted);font-size:13px;margin:0}
 .notes{margin:14px 0 4px}
 .notes .lbl:first-child{margin-top:0}
 .rate{color:var(--accent);font-size:14px;font-weight:600;line-height:1.2}
@@ -408,11 +418,6 @@ function closeSheet() {
   document.body.style.overflow = '';
   render();
 }
-function scoreOptions(cur) {
-  let h = '';
-  for (let v = 1; v <= 10; v += 0.5) h += `<option value="${v}"${cur === v ? ' selected' : ''}>${fmtScore(v)} von 10</option>`;
-  return h;
-}
 function detailHTML(it) {
   const p = prog(it);
   let openN = null;
@@ -424,8 +429,17 @@ function detailHTML(it) {
   if (it.overview) h += `<p class="ov">${esc(it.overview)}</p>`;
   h += `<div class="bar"><button class="btn small${it.active ? '' : ' ghost'}" id="aktiv" aria-pressed="${!!it.active}">${it.active ? 'Aktiv markiert' : 'Als aktiv markieren'}</button></div>
     <div class="notes">
-    <label class="lbl" for="nscore">Bewertung</label>
-    <select id="nscore" class="field"><option value="">Keine Bewertung</option>${scoreOptions(it.score)}</select>
+    <span class="lbl" id="scorelbl">Bewertung</span>
+    <div class="scoreRow">
+      <div class="scrub${it.score ? ' set' : ''}" id="scrub" role="slider" tabindex="0" aria-labelledby="scorelbl" aria-orientation="vertical"
+           aria-valuemin="0" aria-valuemax="10" aria-valuenow="${it.score || 0}" aria-valuetext="${it.score ? fmtScore(it.score) + ' von 10' : 'Keine Bewertung'}">
+        <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+        <span class="num" id="snum">${it.score ? fmtScore(it.score) : '–'}</span>
+        <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="scoreSide"><p class="sh">Zahl nach oben ziehen für mehr, nach unten für weniger. Von 1 bis 10 in Schritten von 0,5.</p>
+        <button class="btn small ghost" id="sclear">Bewertung entfernen</button></div>
+    </div>
     <label class="lbl" for="nstop">${it.type === 'movie' ? 'Stelle im Film' : 'Stelle'}</label>
     <input id="nstop" class="field" maxlength="40" placeholder="${it.type === 'movie' ? 'z. B. 1:23:45' : 'z. B. S2 E4, 12:30'}" value="${esc(it.stop || '')}">
     <label class="lbl" for="nnote">Notiz</label>
@@ -510,17 +524,52 @@ $('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]'
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
 
 sheetBody.addEventListener('change', e => {
-  const cb = e.target;
-  if (cb.id === 'nscore') {
-    const it = db.items[sheetId];
-    if (it) { it.score = cb.value === '' ? 0 : Number(cb.value); save(); }
-    return;
-  }
-  if (!cb.matches('input[type=checkbox]')) return;
+  const cb = e.target; if (!cb.matches('input[type=checkbox]')) return;
   const it = db.items[sheetId]; if (!it) return;
   const s = it.seasons.find(x => String(x.n) === cb.dataset.s), ep = s && s.eps.find(x => String(x.n) === cb.dataset.e);
   if (!ep) return;
   ep.w = cb.checked; it.touched = Date.now(); save(); refreshDetail(it);
+});
+
+const SCORES = [0];                                   // 0 = keine Bewertung, dann 1, 1.5 … 10
+for (let v = 1; v <= 10; v += 0.5) SCORES.push(v);
+function scoreUI(it) {
+  const el = $('#scrub'); if (!el) return;
+  const v = it.score || 0;
+  $('#snum').textContent = v ? fmtScore(v) : '–';
+  el.classList.toggle('set', !!v);
+  el.setAttribute('aria-valuenow', v);
+  el.setAttribute('aria-valuetext', v ? fmtScore(v) + ' von 10' : 'Keine Bewertung');
+}
+let drag = null;
+sheetBody.addEventListener('pointerdown', e => {
+  const el = e.target.closest('#scrub'), it = db.items[sheetId];
+  if (!el || !it) return;
+  e.preventDefault(); el.focus();
+  el.setPointerCapture(e.pointerId);
+  drag = {pid: e.pointerId, y: e.clientY, idx: Math.max(0, SCORES.indexOf(it.score || 0)), it};
+  el.classList.add('drag');
+});
+sheetBody.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const idx = Math.min(SCORES.length - 1, Math.max(0, drag.idx + Math.round((drag.y - e.clientY) / 11)));
+  if (SCORES[idx] !== (drag.it.score || 0)) { drag.it.score = SCORES[idx]; scoreUI(drag.it); }
+});
+const endDrag = e => {
+  if (!drag || e.pointerId !== drag.pid) return;
+  save(); const el = $('#scrub'); if (el) el.classList.remove('drag');
+  drag = null;
+};
+sheetBody.addEventListener('pointerup', endDrag);
+sheetBody.addEventListener('pointercancel', endDrag);
+sheetBody.addEventListener('keydown', e => {          // Bedienung per Tastatur / Bedienungshilfen
+  const it = db.items[sheetId];
+  if (!it || !e.target.closest('#scrub')) return;
+  const dir = (e.key === 'ArrowUp' || e.key === 'ArrowRight') ? 1 : (e.key === 'ArrowDown' || e.key === 'ArrowLeft') ? -1 : 0;
+  if (!dir) return;
+  e.preventDefault();
+  const idx = Math.min(SCORES.length - 1, Math.max(0, Math.max(0, SCORES.indexOf(it.score || 0)) + dir));
+  it.score = SCORES[idx]; save(); scoreUI(it);
 });
 
 sheetBody.addEventListener('input', e => {
@@ -543,6 +592,7 @@ sheetBody.addEventListener('click', async e => {
     el.textContent = it.active ? 'Aktiv markiert' : 'Als aktiv markieren';
     return;
   }
+  if (t.closest('#sclear') && it) { it.score = 0; save(); return scoreUI(it); }
   if (t.closest('#allw') && it) { markAll(it, true); it.touched = Date.now(); save(); return refreshDetail(it); }
   if (t.closest('#allr') && it) { markAll(it, false); it.touched = Date.now(); save(); return refreshDetail(it); }
   if (t.closest('#mtoggle') && it) { it.watched = !it.watched; it.touched = Date.now(); save(); return refreshDetail(it); }

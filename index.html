@@ -51,10 +51,9 @@ h2{font-family:var(--serif);font-size:20px;font-weight:600;margin:22px 0 10px}
 .tag{display:inline-block;align-self:flex-start;font-size:13px;color:var(--muted);border:1px solid var(--line);
      border-radius:999px;padding:3px 10px}
 
-/* Filmstreifen: ein Feld pro Folge */
-.strip{display:flex;gap:2px;height:9px;margin-top:7px}
-.strip i{flex:1;background:var(--line);border-radius:1px}
-.strip i.on{background:var(--accent)}
+/* Fortschrittsbalken */
+.pbar{height:8px;border-radius:999px;background:var(--line);overflow:hidden;margin-top:7px}
+.pbar>span{display:block;height:100%;border-radius:999px;background:var(--accent)}
 
 /* Buttons und Felder */
 .btn{border:0;border-radius:999px;padding:11px 18px;font-weight:600;background:var(--accent);color:var(--accent-ink)}
@@ -113,6 +112,10 @@ textarea.field{resize:vertical;font-size:14px}
 .ep .ed{flex:none;color:var(--muted);font-size:12px;text-align:right}
 .ep.off{opacity:.55}
 .foot{display:flex;gap:8px;justify-content:space-between;margin-top:20px}
+.notes{margin:14px 0 4px}
+.notes .lbl:first-child{margin-top:0}
+.rate{color:var(--accent);font-size:14px;font-weight:600;line-height:1.2}
+.sub.note{font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .attr{color:var(--muted);font-size:12px;margin-top:24px}
 .attr a{color:inherit}
 
@@ -154,6 +157,10 @@ try {
   const raw = localStorage.getItem(LS);
   if (raw) { const o = JSON.parse(raw); if (o && o.items) db = o; }
 } catch (e) { /* leere Daten */ }
+for (const it of Object.values(db.items)) {          // frühere 5-Sterne-Bewertung in 10er-Skala übernehmen
+  if (it.rating && !it.score) it.score = it.rating * 2;
+  delete it.rating;
+}
 
 function save() {
   try { localStorage.setItem(LS, JSON.stringify(db)); }
@@ -271,19 +278,17 @@ const app = $('#app');
 const GEAR = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>';
 const head = (t, c) => `<header class="head"><div><h1>${t}</h1><span class="count">${c}</span></div><button class="icon" id="gear" aria-label="Einstellungen">${GEAR}</button></header>`;
 
-function stripHTML(seen, total) {
+function barHTML(seen, total) {
   if (!total) return '';
-  const n = Math.min(total, 40);
-  const on = total > 40 ? Math.round(seen / total * n) : seen;
-  let h = '';
-  for (let i = 0; i < n; i++) h += `<i${i < on ? ' class="on"' : ''}></i>`;
-  return `<div class="strip" aria-hidden="true">${h}</div>`;
+  const pct = Math.round(seen / total * 100);
+  return `<div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>`;
 }
 function posterHTML(it, big) {
   const c = big ? 'poster big' : 'poster';
   return it.poster ? `<img class="${c}" src="${img(it.poster, big ? 342 : 185)}" alt="" loading="lazy">`
                    : `<div class="${c} ph">${esc((it.title || '?')[0])}</div>`;
 }
+const fmtScore = n => String(n).replace('.', ',');
 const kind = it => (it.type === 'tv' ? 'Serie' : 'Film') + (it.year ? ', ' + it.year : '');
 
 function row(it) {
@@ -292,17 +297,22 @@ function row(it) {
     <span class="meta"><span class="title">${esc(it.title)}</span>
     <span class="sub">${esc(kind(it))}</span>
     <span class="sub">${esc(progText(it))}</span>
-    ${it.type === 'tv' ? stripHTML(p.seen, p.total) : ''}</span></button>`;
+    ${it.score ? `<span class="rate" aria-label="Bewertung ${fmtScore(it.score)} von 10">★ ${fmtScore(it.score)} / 10</span>` : ''}
+    ${it.stop ? `<span class="sub">Stelle: ${esc(it.stop)}</span>` : ''}
+    ${it.note ? `<span class="sub note">${esc(it.note)}</span>` : ''}
+    ${it.type === 'tv' ? barHTML(p.seen, p.total) : ''}</span></button>`;
 }
 const emptyBox = (txt) => `<div class="empty"><p>${txt}</p><button class="btn" data-go="search">Titel suchen</button></div>`;
 
 function renderWatch() {
   const all = Object.values(db.items).filter(i => !isDone(i));
-  const started = all.filter(i => i.type === 'tv' && prog(i).seen > 0).sort((a, b) => (b.touched || 0) - (a.touched || 0));
-  const rest = all.filter(i => !started.includes(i)).sort((a, b) => (b.added || 0) - (a.added || 0));
+  const active = all.filter(i => i.active).sort((a, b) => (b.touched || 0) - (a.touched || 0));
+  const started = all.filter(i => !i.active && i.type === 'tv' && prog(i).seen > 0).sort((a, b) => (b.touched || 0) - (a.touched || 0));
+  const rest = all.filter(i => !i.active && !started.includes(i)).sort((a, b) => (b.added || 0) - (a.added || 0));
   let h = head('Watchlist', `${all.length} Titel`);
   if (!all.length) h += emptyBox('Deine Watchlist ist leer. Suche einen Film oder eine Serie und füge ihn hinzu.');
   else {
+    if (active.length) h += '<h2>Aktiv</h2>' + active.map(row).join('');
     if (started.length) h += '<h2>Weiterschauen</h2>' + started.map(row).join('');
     if (rest.length) h += '<h2>Noch nicht angefangen</h2>' + rest.map(row).join('');
   }
@@ -398,6 +408,11 @@ function closeSheet() {
   document.body.style.overflow = '';
   render();
 }
+function scoreOptions(cur) {
+  let h = '';
+  for (let v = 1; v <= 10; v += 0.5) h += `<option value="${v}"${cur === v ? ' selected' : ''}>${fmtScore(v)} von 10</option>`;
+  return h;
+}
 function detailHTML(it) {
   const p = prog(it);
   let openN = null;
@@ -405,8 +420,16 @@ function detailHTML(it) {
   let h = `<div class="dtop"><button class="btn small ghost" data-close>Schließen</button></div>
     <div class="dhead">${posterHTML(it, true)}<div class="meta"><h2 class="dtitle" style="margin-top:0">${esc(it.title)}</h2>
     <span class="sub">${esc(kind(it))}</span><span class="sub" id="dprog">${esc(progText(it))}</span>
-    <div id="dstrip">${it.type === 'tv' ? stripHTML(p.seen, p.total) : ''}</div></div></div>`;
+    <div id="dstrip">${it.type === 'tv' ? barHTML(p.seen, p.total) : ''}</div></div></div>`;
   if (it.overview) h += `<p class="ov">${esc(it.overview)}</p>`;
+  h += `<div class="bar"><button class="btn small${it.active ? '' : ' ghost'}" id="aktiv" aria-pressed="${!!it.active}">${it.active ? 'Aktiv markiert' : 'Als aktiv markieren'}</button></div>
+    <div class="notes">
+    <label class="lbl" for="nscore">Bewertung</label>
+    <select id="nscore" class="field"><option value="">Keine Bewertung</option>${scoreOptions(it.score)}</select>
+    <label class="lbl" for="nstop">${it.type === 'movie' ? 'Stelle im Film' : 'Stelle'}</label>
+    <input id="nstop" class="field" maxlength="40" placeholder="${it.type === 'movie' ? 'z. B. 1:23:45' : 'z. B. S2 E4, 12:30'}" value="${esc(it.stop || '')}">
+    <label class="lbl" for="nnote">Notiz</label>
+    <textarea id="nnote" class="field" rows="3" maxlength="500" placeholder="Kurze Notiz …">${esc(it.note || '')}</textarea></div>`;
   if (it.type === 'movie') {
     h += `<button class="btn wide" id="mtoggle">${it.watched ? 'Als nicht gesehen markieren' : 'Als gesehen markieren'}</button>`;
   } else {
@@ -430,7 +453,7 @@ function detailHTML(it) {
 function refreshDetail(it) {
   const body = $('#sheet-body'), p = prog(it);
   $('#dprog').textContent = progText(it);
-  $('#dstrip').innerHTML = it.type === 'tv' ? stripHTML(p.seen, p.total) : '';
+  $('#dstrip').innerHTML = it.type === 'tv' ? barHTML(p.seen, p.total) : '';
   if (it.type === 'movie') {
     $('#mtoggle').textContent = it.watched ? 'Als nicht gesehen markieren' : 'Als gesehen markieren';
     return;
@@ -487,11 +510,23 @@ $('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]'
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
 
 sheetBody.addEventListener('change', e => {
-  const cb = e.target; if (!cb.matches('input[type=checkbox]')) return;
+  const cb = e.target;
+  if (cb.id === 'nscore') {
+    const it = db.items[sheetId];
+    if (it) { it.score = cb.value === '' ? 0 : Number(cb.value); save(); }
+    return;
+  }
+  if (!cb.matches('input[type=checkbox]')) return;
   const it = db.items[sheetId]; if (!it) return;
   const s = it.seasons.find(x => String(x.n) === cb.dataset.s), ep = s && s.eps.find(x => String(x.n) === cb.dataset.e);
   if (!ep) return;
   ep.w = cb.checked; it.touched = Date.now(); save(); refreshDetail(it);
+});
+
+sheetBody.addEventListener('input', e => {
+  const it = db.items[sheetId]; if (!it) return;
+  if (e.target.id === 'nstop') { it.stop = e.target.value.trim(); save(); }
+  else if (e.target.id === 'nnote') { it.note = e.target.value.trim(); save(); }
 });
 
 sheetBody.addEventListener('click', async e => {
@@ -501,6 +536,12 @@ sheetBody.addEventListener('click', async e => {
     const s = it.seasons.find(x => String(x.n) === el.dataset.sall), a = s.eps.filter(aired);
     const v = !(a.length && a.every(x => x.w));
     a.forEach(x => { x.w = v; }); it.touched = Date.now(); save(); return refreshDetail(it);
+  }
+  if ((el = t.closest('#aktiv')) && it) {
+    it.active = !it.active; it.touched = Date.now(); save();
+    el.classList.toggle('ghost', !it.active); el.setAttribute('aria-pressed', String(!!it.active));
+    el.textContent = it.active ? 'Aktiv markiert' : 'Als aktiv markieren';
+    return;
   }
   if (t.closest('#allw') && it) { markAll(it, true); it.touched = Date.now(); save(); return refreshDetail(it); }
   if (t.closest('#allr') && it) { markAll(it, false); it.touched = Date.now(); save(); return refreshDetail(it); }
